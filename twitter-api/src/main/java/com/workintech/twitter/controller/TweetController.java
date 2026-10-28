@@ -1,5 +1,6 @@
 package com.workintech.twitter.controller;
 
+import com.workintech.twitter.dto.PageResponse;
 import com.workintech.twitter.dto.TweetRequest;
 import com.workintech.twitter.dto.TweetResponse;
 import com.workintech.twitter.service.TweetService;
@@ -9,8 +10,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/tweet")
@@ -24,9 +23,12 @@ public class TweetController {
         return ResponseEntity.status(HttpStatus.CREATED).body(tweetService.create(request, auth.getName()));
     }
 
+    // Ornek: /tweet/findByUserId?userId=1&page=0&size=10
     @GetMapping("/findByUserId")
-    public List<TweetResponse> findByUserId(@RequestParam Long userId) {
-        return tweetService.findByUserId(userId);
+    public PageResponse<TweetResponse> findByUserId(@RequestParam Long userId,
+                                                    @RequestParam(defaultValue = "0") int page,
+                                                    @RequestParam(defaultValue = "10") int size) {
+        return tweetService.findByUserId(userId, page, size);
     }
 
     @GetMapping("/findById")

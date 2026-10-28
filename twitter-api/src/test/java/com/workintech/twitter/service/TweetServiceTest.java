@@ -1,5 +1,7 @@
 package com.workintech.twitter.service;
 
+import com.workintech.twitter.dto.IdCount;
+import com.workintech.twitter.dto.PageResponse;
 import com.workintech.twitter.dto.TweetRequest;
 import com.workintech.twitter.dto.TweetResponse;
 import com.workintech.twitter.entity.Tweet;
@@ -9,17 +11,23 @@ import com.workintech.twitter.exception.ApiException;
 import com.workintech.twitter.repository.CommentRepository;
 import com.workintech.twitter.repository.TweetLikeRepository;
 import com.workintech.twitter.repository.TweetRepository;
+import com.workintech.twitter.repository.TweetStatisticsRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -28,6 +36,7 @@ class TweetServiceTest {
     @Mock private TweetRepository tweetRepository;
     @Mock private TweetLikeRepository likeRepository;
     @Mock private CommentRepository commentRepository;
+    @Mock private TweetStatisticsRepository statisticsRepository;
     @Mock private UserService userService;
     @InjectMocks private TweetService tweetService;
 
@@ -62,13 +71,41 @@ class TweetServiceTest {
     }
 
     @Test
-    void findById_incrementsViewCount() {
+    void findById_incrementsViewCountWithAtomicUpdate() {
         Tweet t = tweet(1L, user(1L, "berat"));
         when(tweetRepository.findById(1L)).thenReturn(Optional.of(t));
 
+        tweetService.findById(1L);
+
+        verify(statisticsRepository).incrementViewCount(1L);
+    }
+
+    @Test
+    void findById_usesBatchCountQueries() {
+        Tweet t = tweet(1L, user(1L, "berat"));
+        when(tweetRepository.findById(1L)).thenReturn(Optional.of(t));
+        when(likeRepository.countByTweetIds(List.of(1L))).thenReturn(List.of(new IdCount(1L, 5L)));
+        when(commentRepository.countByTweetIds(List.of(1L))).thenReturn(List.of(new IdCount(1L, 2L)));
+
         TweetResponse response = tweetService.findById(1L);
 
-        assertEquals(1, response.viewCount());
+        assertEquals(5, response.likeCount());
+        assertEquals(2, response.commentCount());
+        assertEquals(0, response.retweetCount());
+    }
+
+    @Test
+    void findByUserId_capsPageSizeAndFixesNegativePage() {
+        when(userService.getById(1L)).thenReturn(user(1L, "berat"));
+        when(tweetRepository.findByUser_Id(eq(1L), any(Pageable.class))).thenReturn(Page.empty());
+
+        PageResponse<TweetResponse> response = tweetService.findByUserId(1L, -3, 1000);
+
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(tweetRepository).findByUser_Id(eq(1L), captor.capture());
+        assertEquals(0, captor.getValue().getPageNumber());
+        assertEquals(TweetService.MAX_PAGE_SIZE, captor.getValue().getPageSize());
+        assertTrue(response.content().isEmpty());
     }
 
     @Test

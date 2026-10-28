@@ -1,5 +1,7 @@
 package com.workintech.twitter.service;
 
+import com.workintech.twitter.dto.IdCount;
+import com.workintech.twitter.dto.PageResponse;
 import com.workintech.twitter.dto.TweetRequest;
 import com.workintech.twitter.dto.TweetResponse;
 import com.workintech.twitter.entity.Tweet;
@@ -9,20 +11,30 @@ import com.workintech.twitter.exception.ApiException;
 import com.workintech.twitter.repository.CommentRepository;
 import com.workintech.twitter.repository.TweetLikeRepository;
 import com.workintech.twitter.repository.TweetRepository;
+import com.workintech.twitter.repository.TweetStatisticsRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class TweetService {
 
+    public static final int MAX_PAGE_SIZE = 50;
+
     private final TweetRepository tweetRepository;
     private final TweetLikeRepository likeRepository;
     private final CommentRepository commentRepository;
+    private final TweetStatisticsRepository statisticsRepository;
     private final UserService userService;
 
     @Transactional
@@ -33,19 +45,27 @@ public class TweetService {
     }
 
     @Transactional(readOnly = true)
-    public List<TweetResponse> findByUserId(Long userId) {
+    public PageResponse<TweetResponse> findByUserId(Long userId, int page, int size) {
         userService.getById(userId);
-        return tweetRepository.findByUser_IdOrderByCreatedAtDesc(userId)
-                .stream().map(this::toResponse).toList();
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt", "id"));
+
+        Page<Tweet> result = tweetRepository.findByUser_Id(userId, pageable);
+        return new PageResponse<>(
+                toResponses(result.getContent()),
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.isLast());
     }
 
     @Transactional
     public TweetResponse findById(Long id) {
-        Tweet tweet = getTweetOrThrow(id);
-        if (tweet.getStatistics() != null) {
-            tweet.getStatistics().setViewCount(tweet.getStatistics().getViewCount() + 1);
-        }
-        return toResponse(tweet);
+        // Once atomik UPDATE, sonra okuma: tweet guncel sayacla yuklenir
+        statisticsRepository.incrementViewCount(id);
+        return toResponse(getTweetOrThrow(id));
     }
 
     @Transactional
@@ -97,20 +117,41 @@ public class TweetService {
                 .orElseThrow(() -> new ApiException("Tweet bulunamadı: " + id, HttpStatus.NOT_FOUND));
     }
 
-    public TweetResponse toResponse(Tweet t) {
-        long views = t.getStatistics() == null ? 0 : t.getStatistics().getViewCount();
-        return new TweetResponse(
-                t.getId(),
-                t.getContent(),
-                t.getLocation(),
-                t.getUser().getId(),
-                t.getUser().getUsername(),
-                t.getParentTweet() == null ? null : t.getParentTweet().getId(),
-                likeRepository.countByTweet_Id(t.getId()),
-                commentRepository.countByTweet_Id(t.getId()),
-                tweetRepository.countByParentTweet_Id(t.getId()),
-                views,
-                t.getCreatedAt());
+    public TweetResponse toResponse(Tweet tweet) {
+        return toResponses(List.of(tweet)).get(0);
+    }
+
+    /**
+     * Tweet listesini response'a cevirir. Like / yorum / retweet sayilari
+     * tweet basina ayri sorgu yerine, tum liste icin 3 toplu (GROUP BY) sorguyla alinir.
+     */
+    public List<TweetResponse> toResponses(List<Tweet> tweets) {
+        if (tweets.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = tweets.stream().map(Tweet::getId).toList();
+        Map<Long, Long> likes = toMap(likeRepository.countByTweetIds(ids));
+        Map<Long, Long> comments = toMap(commentRepository.countByTweetIds(ids));
+        Map<Long, Long> retweets = toMap(tweetRepository.countRetweetsByTweetIds(ids));
+
+        return tweets.stream()
+                .map(t -> new TweetResponse(
+                        t.getId(),
+                        t.getContent(),
+                        t.getLocation(),
+                        t.getUser().getId(),
+                        t.getUser().getUsername(),
+                        t.getParentTweet() == null ? null : t.getParentTweet().getId(),
+                        likes.getOrDefault(t.getId(), 0L),
+                        comments.getOrDefault(t.getId(), 0L),
+                        retweets.getOrDefault(t.getId(), 0L),
+                        t.getStatistics() == null ? 0 : t.getStatistics().getViewCount(),
+                        t.getCreatedAt()))
+                .toList();
+    }
+
+    private Map<Long, Long> toMap(List<IdCount> rows) {
+        return rows.stream().collect(Collectors.toMap(IdCount::id, IdCount::count));
     }
 
     private Tweet newTweet(String content, String location, User user, Tweet parent) {

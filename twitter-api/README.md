@@ -15,7 +15,7 @@ HTTP Basic. Önce `/register`, sonra diğer isteklerde `Authorization: Basic bas
 curl -X POST localhost:3000/register -H "Content-Type: application/json" -d '{"username":"berat","email":"berat@mail.com","password":"123456"}'
 curl -u berat:123456 -X POST localhost:3000/login
 curl -u berat:123456 -X POST localhost:3000/tweet -H "Content-Type: application/json" -d '{"content":"Ilk tweetim","location":"Ankara"}'
-curl "localhost:3000/tweet/findByUserId?userId=1"
+curl "localhost:3000/tweet/findByUserId?userId=1&page=0&size=10"   # sayfalama: page 0-tabanli, size en fazla 50
 curl "localhost:3000/tweet/findById?id=1"
 curl -u berat:123456 -X PUT localhost:3000/tweet/1 -H "Content-Type: application/json" -d '{"content":"Guncel"}'
 curl -u berat:123456 -X DELETE localhost:3000/tweet/1
